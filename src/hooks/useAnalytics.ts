@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { isTrackingExcluded } from '@/lib/trackingExclusion';
 
 // ============== VISITOR & SESSION MANAGEMENT ==============
 
@@ -201,7 +202,8 @@ export function useAnalytics() {
 
   const visitorId = getVisitorId();
   const sessionId = getSessionId();
-  const isBotVisitor = isBot();
+  // Bots and internal team traffic are never recorded
+  const isUntrackedVisitor = isBot() || isTrackingExcluded();
   const isInternalVisitor = checkInternalTraffic();
 
   // Initialize session (once per session) - must complete before pageviews
@@ -213,7 +215,7 @@ export function useAnalytics() {
       sessionReady.current = true;
       return true;
     }
-    if (isBotVisitor) {
+    if (isUntrackedVisitor) {
       console.log('[Analytics] Bot detected, skipping session init');
       return false;
     }
@@ -269,7 +271,7 @@ export function useAnalytics() {
       });
 
       console.log('[Analytics] Session initialized:', sessionId, { 
-        isBot: isBotVisitor, 
+        isBot: isUntrackedVisitor, 
         isInternal: isInternalVisitor,
         source 
       });
@@ -285,7 +287,7 @@ export function useAnalytics() {
       console.error('[Analytics] Failed to init session:', error);
       return false;
     }
-  }, [visitorId, sessionId, isBotVisitor, isInternalVisitor]);
+  }, [visitorId, sessionId, isUntrackedVisitor, isInternalVisitor]);
 
   // Internal pageview tracking (assumes session is ready)
   const trackPageViewInternal = async (path: string) => {
@@ -324,7 +326,7 @@ export function useAnalytics() {
 
   // Track page view with deduplication - waits for session to be ready
   const trackPageView = useCallback(async () => {
-    if (isBotVisitor) {
+    if (isUntrackedVisitor) {
       console.log('[Analytics] Bot detected, skipping pageview');
       return;
     }
@@ -366,11 +368,11 @@ export function useAnalytics() {
     }
 
     await trackPageViewInternal(path);
-  }, [location.pathname, sessionId, visitorId, isBotVisitor]);
+  }, [location.pathname, sessionId, visitorId, isUntrackedVisitor]);
 
   // Update page view on leave
   const updatePageView = useCallback(async () => {
-    if (!pageViewId.current || isBotVisitor) return;
+    if (!pageViewId.current || isUntrackedVisitor) return;
 
     const timeOnPage = Date.now() - pageLoadTime.current;
 
@@ -389,11 +391,11 @@ export function useAnalytics() {
     } catch (error) {
       console.error('[Analytics] Failed to update pageview:', error);
     }
-  }, [isBotVisitor]);
+  }, [isUntrackedVisitor]);
 
   // Update session heartbeat and exit page
   const updateSessionHeartbeat = useCallback(async () => {
-    if (isBotVisitor) return;
+    if (isUntrackedVisitor) return;
     
     try {
       await supabase
@@ -406,7 +408,7 @@ export function useAnalytics() {
     } catch (error) {
       console.error('[Analytics] Failed to update session heartbeat:', error);
     }
-  }, [sessionId, location.pathname, isBotVisitor]);
+  }, [sessionId, location.pathname, isUntrackedVisitor]);
 
   // Scroll tracking
   useEffect(() => {
@@ -516,6 +518,8 @@ export const trackAirbnbClick = async ({
   suite,
   linkLabel,
 }: TrackAirbnbClickParams) => {
+  if (isTrackingExcluded()) return;
+
   // Use exported getters to ensure we get initialized values
   const sessionId = getSessionId();
   const visitorId = getVisitorId();
